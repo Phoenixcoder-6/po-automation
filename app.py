@@ -21,7 +21,6 @@ def extract_text_blocks(file_bytes):
             page_text = page.extract_text()
             if page_text:
                 full_text += page_text + "\n"
-    # Split POs based on "Purchase Order"
     blocks = re.split(r'(?=Purchase Order)', full_text, flags=re.IGNORECASE)
     return [b.strip() for b in blocks if b.strip()]
 
@@ -55,7 +54,7 @@ def extract_line_items(text):
     items = []
 
     pattern = re.compile(
-        r'^\s*\d+\.\s*(.+?)\s*[-–]?\s*(Qty|Quantity)[:\s]*(\d+)\s*[-–]?\s*(Unit Price|Price)[:\s₹Rs\.:]*(\d{1,3}(?:,\d{3})*\.\d{2})',
+        r'^\s*\d+\.\s*(.+?)\s*(Qty|Quantity)[:\s]*(\d+)\s*(Unit Price|Price)[:\s₹Rs\.:]*(\d{1,3}(?:,\d{3})*\.\d{2})',
         re.I
     )
 
@@ -72,7 +71,32 @@ def extract_line_items(text):
                 "Unit_Price": unit,
                 "Total_Price": total
             })
+
     return pd.DataFrame(items)
+
+def extract_table_items(file_bytes):
+    tables = []
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            extracted_tables = page.extract_tables()
+            for table in extracted_tables:
+                df = pd.DataFrame(table[1:], columns=table[0])
+                df.columns = [col.strip().lower() for col in df.columns]
+                if {'description', 'quantity', 'unit price'}.issubset(set(df.columns)):
+                    for _, row in df.iterrows():
+                        try:
+                            qty = float(row['quantity'])
+                            unit = float(str(row['unit price']).replace(",", ""))
+                            total = qty * unit
+                            tables.append({
+                                "Description": row['description'],
+                                "Quantity": qty,
+                                "Unit_Price": unit,
+                                "Total_Price": f"{total:.2f}"
+                            })
+                        except:
+                            continue
+    return pd.DataFrame(tables)
 
 def annotate_pdf(file_bytes, fields, items):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -95,6 +119,7 @@ if uploaded_file:
 
     pdf_bytes = uploaded_file.read()
     po_blocks = extract_text_blocks(pdf_bytes)
+    table_items_df = extract_table_items(pdf_bytes)
 
     all_po_data = []
     all_items = []
@@ -102,6 +127,10 @@ if uploaded_file:
     for block in po_blocks:
         fields = extract_main_fields(block)
         items_df = extract_line_items(block)
+
+        if items_df.empty and not table_items_df.empty:
+            items_df = table_items_df  # fallback to tables
+
         all_po_data.append({
             "PO_Fields": fields,
             "Line_Items": items_df.to_dict(orient="records")
@@ -115,7 +144,10 @@ if uploaded_file:
     st.dataframe(pd.DataFrame([po["PO_Fields"] for po in all_po_data]))
 
     st.subheader("📦 Extracted Line Items")
-    st.dataframe(pd.DataFrame(all_items))
+    if all_items:
+        st.dataframe(pd.DataFrame(all_items))
+    else:
+        st.warning("⚠️ No line items extracted. Please check the PDF formatting or try a clearer version.")
 
     # Save
     pd.DataFrame([po["PO_Fields"] for po in all_po_data]).to_excel("All_PO_Main_Fields.xlsx", index=False)
