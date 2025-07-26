@@ -4,40 +4,26 @@ import fitz  # PyMuPDF
 import io
 import json
 import re
-from PyPDF2 import PdfReader
+import pdfplumber
 from zipfile import ZipFile
 
 st.set_page_config(page_title="PO Automation", layout="wide")
 st.title("📄 Multi-PO Automation Tool")
 
-uploaded_file = st.file_uploader("Upload a Purchase Order PDF (with multiple POs)", type="pdf")
+uploaded_file = st.file_uploader("Upload a Purchase Order PDF (even with multiple POs)", type="pdf")
 
-# ---------- 1. Page-wise Text Extraction ----------
+# ---------- Helper Functions ----------
 
-def extract_po_blocks_from_pdf(file_bytes):
-    reader = PdfReader(io.BytesIO(file_bytes))
-    po_blocks = []
-    current_po = ""
-    
-    for page in reader.pages:
-        text = page.extract_text()
-        if not text:
-            continue
-        lines = text.split('\n')
-        for line in lines:
-            if re.match(r'Purchase\s+Order', line, re.I):
-                if current_po:
-                    po_blocks.append(current_po.strip())
-                current_po = line + "\n"
-            else:
-                current_po += line + "\n"
-    
-    if current_po:
-        po_blocks.append(current_po.strip())
-    
-    return po_blocks
-
-# ---------- 2. Field Extractors ----------
+def extract_text_blocks(file_bytes):
+    full_text = ""
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                full_text += page_text + "\n"
+    # Split POs based on "Purchase Order"
+    blocks = re.split(r'(?=Purchase Order)', full_text, flags=re.IGNORECASE)
+    return [b.strip() for b in blocks if b.strip()]
 
 def extract_main_fields(text):
     fields = {}
@@ -49,26 +35,36 @@ def extract_main_fields(text):
     fields['Total_Amount'] = amt_match.group(1).replace(',', '') if amt_match else 'Not Found'
     return fields
 
-def extract_line_items_loose(text):
-    lines = text.split('\n')
+def smart_merge_lines(lines):
+    merged = []
+    buffer = ""
+    for line in lines:
+        if re.match(r'^\s*\d+\.', line):
+            if buffer:
+                merged.append(buffer.strip())
+            buffer = line.strip()
+        else:
+            buffer += " " + line.strip()
+    if buffer:
+        merged.append(buffer.strip())
+    return merged
+
+def extract_line_items(text):
+    raw_lines = text.split('\n')
+    lines = smart_merge_lines(raw_lines)
     items = []
 
-    pattern1 = re.compile(
-        r'(?P<desc>.+?)\s*[-–]?\s*(Qty|Quantity)[:\s]*(?P<qty>\d+)\s*[-–]?\s*(Unit Price|Price)[:\s₹Rs\.:]*(?P<price>[\d,]+\.\d{2})',
-        re.I
-    )
-
-    pattern2 = re.compile(
-        r'(?P<desc>[A-Za-z0-9\s\-.]+)\s+(?P<qty>\d{1,3})\s+([\₹Rs\.:]*)?(?P<price>[\d,]+\.\d{2})',
+    pattern = re.compile(
+        r'^\s*\d+\.\s*(.+?)\s*[-–]?\s*(Qty|Quantity)[:\s]*(\d+)\s*[-–]?\s*(Unit Price|Price)[:\s₹Rs\.:]*(\d{1,3}(?:,\d{3})*\.\d{2})',
         re.I
     )
 
     for line in lines:
-        match1 = pattern1.search(line)
-        if match1:
-            desc = re.sub(r'^\d+\.\s*', '', match1.group("desc").strip())
-            qty = match1.group("qty")
-            unit = match1.group("price").replace(",", "")
+        match = pattern.search(line)
+        if match:
+            desc = match.group(1).strip()
+            qty = match.group(3)
+            unit = match.group(5).replace(",", "")
             total = f"{float(qty)*float(unit):.2f}"
             items.append({
                 "Description": desc,
@@ -76,24 +72,7 @@ def extract_line_items_loose(text):
                 "Unit_Price": unit,
                 "Total_Price": total
             })
-            continue
-
-        match2 = pattern2.search(line)
-        if match2:
-            desc = match2.group("desc").strip()
-            qty = match2.group("qty")
-            unit = match2.group("price").replace(",", "")
-            total = f"{float(qty)*float(unit):.2f}"
-            items.append({
-                "Description": desc,
-                "Quantity": qty,
-                "Unit_Price": unit,
-                "Total_Price": total
-            })
-
     return pd.DataFrame(items)
-
-# ---------- 3. Annotator ----------
 
 def annotate_pdf(file_bytes, fields, items):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -105,23 +84,24 @@ def annotate_pdf(file_bytes, fields, items):
         for _, row in items.iterrows():
             for rect in page.search_for(str(row['Description'])):
                 page.add_rect_annot(rect)
-        break  # Only annotate first PO
+        break
     doc.save("Annotated_PO.pdf")
     doc.close()
 
-# ---------- 4. Streamlit App Logic ----------
+# ---------- Main App Logic ----------
 
 if uploaded_file:
-    st.info("✅ File uploaded. Extracting POs...")
+    st.info("✅ File uploaded. Processing all PO blocks...")
+
     pdf_bytes = uploaded_file.read()
-    
-    po_blocks = extract_po_blocks_from_pdf(pdf_bytes)
+    po_blocks = extract_text_blocks(pdf_bytes)
+
     all_po_data = []
     all_items = []
 
     for block in po_blocks:
         fields = extract_main_fields(block)
-        items_df = extract_line_items_loose(block)
+        items_df = extract_line_items(block)
         all_po_data.append({
             "PO_Fields": fields,
             "Line_Items": items_df.to_dict(orient="records")
@@ -131,23 +111,22 @@ if uploaded_file:
             all_items.append(item)
 
     # Display
-    st.subheader("📋 PO Summary")
+    st.subheader("📋 Extracted PO Fields")
     st.dataframe(pd.DataFrame([po["PO_Fields"] for po in all_po_data]))
 
-    st.subheader("📦 All Line Items")
+    st.subheader("📦 Extracted Line Items")
     st.dataframe(pd.DataFrame(all_items))
 
-    # Save files
+    # Save
     pd.DataFrame([po["PO_Fields"] for po in all_po_data]).to_excel("All_PO_Main_Fields.xlsx", index=False)
     pd.DataFrame(all_items).to_excel("All_PO_Line_Items.xlsx", index=False)
-
     with open("All_PO_Structured_Data.json", "w") as f:
         json.dump(all_po_data, f, indent=4)
 
-    # Annotate 1st PO
+    # Annotate first PO
     annotate_pdf(pdf_bytes, all_po_data[0]["PO_Fields"], pd.DataFrame(all_po_data[0]["Line_Items"]))
 
-    # Zip
+    # Bundle
     with ZipFile("PO_Extraction_Outputs.zip", "w") as zipf:
         zipf.write("All_PO_Main_Fields.xlsx")
         zipf.write("All_PO_Line_Items.xlsx")
@@ -155,4 +134,4 @@ if uploaded_file:
         zipf.write("Annotated_PO.pdf")
 
     with open("PO_Extraction_Outputs.zip", "rb") as f:
-        st.download_button("📥 Download All Outputs", f, file_name="PO_Extraction_Outputs.zip")
+        st.download_button("📥 Download All Extracted Outputs", f, file_name="PO_Extraction_Outputs.zip")
