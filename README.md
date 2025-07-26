@@ -96,3 +96,67 @@ Purchase Order
             Total Amount: 
             Item - Quantity:  - Unit Price: 
 
+
+---
+
+
+You can include multiple POs in a single PDF. Each PO should begin with `"Purchase Order"` keyword.
+
+---
+
+## 🔧 Setup Instructions
+
+### 🔁 Clone the Repo
+
+    bash
+    git clone https://github.com/yourusername/po-automation-tool.git
+    cd po-automation-tool
+
+---
+
+# 🐍 Create & Activate Environment
+
+    python -m venv venv
+    source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+
+---
+
+# 📦 Install Requirements
+
+    bash
+    pip install -r requirements.txt
+
+---
+
+# ▶️ Run the App
+
+    streamlit run app.py
+
+---
+
+# 📈 Future Improvements
+- 🧾 Support table-based line items with layout-parser.
+- 🧠 Use LLMs for more accurate description/line-item segmentation.
+
+--- 
+
+# 🧠 Maintainer
+
+👩‍💻 Ankita Ghosh
+Postgraduate in CSE (Data Science) | IEEE Researcher | AI/ML Developer
+Feel free to connect for collaboration or contributions!
+
+---
+
+# 🤝 Contributing
+Pull requests are welcome. For major changes, open an issue first.
+Please ensure tests are updated as appropriate.
+
+
+
+
+
+
+
+
+
