@@ -38,7 +38,7 @@ def extract_line_items_loose(text):
     )
 
     pattern2 = re.compile(
-        r'(?P<desc>[A-Za-z0-9\s\-.]+)\s+(?P<qty>\d{1,3})\s+([\₹Rs\.:]*)?(?P<price>[\d,]+\.\d{2})',
+        r'(?P<desc>[A-Za-z0-9\s\-.]+?)\s+(?P<qty>\d{1,3})\s+([\₹Rs\.:]*)?(?P<price>[\d,]+\.\d{2})',
         re.I
     )
 
@@ -82,7 +82,7 @@ def annotate_pdf(file_bytes, fields, items):
         for _, row in items.iterrows():
             for rect in page.search_for(str(row['Description'])):
                 page.add_rect_annot(rect)
-        break  # Annotate only first PO
+        break  # only annotate first PO
     doc.save("Annotated_PO.pdf")
     doc.close()
 
@@ -99,16 +99,24 @@ if uploaded_file:
     all_po_data = []
     all_items = []
 
+    st.subheader("🧪 Debug: Raw PO Text Blocks")
+    for idx, block in enumerate(po_blocks):
+        with st.expander(f"📄 PO Block {idx + 1}"):
+            st.text(block)
+
     for block in po_blocks:
         fields = extract_main_fields(block)
         items_df = extract_line_items_loose(block)
+
+        # Link PO Number to each item
+        for item in items_df.to_dict(orient="records"):
+            item["PO_Number"] = fields["PO_Number"]
+            all_items.append(item)
+
         all_po_data.append({
             "PO_Fields": fields,
             "Line_Items": items_df.to_dict(orient="records")
         })
-        for item in items_df.to_dict(orient="records"):
-            item["PO_Number"] = fields["PO_Number"]
-            all_items.append(item)
 
     # Display results
     st.subheader("📋 All Extracted PO Fields")
@@ -124,15 +132,16 @@ if uploaded_file:
     with open("All_PO_Structured_Data.json", "w") as f:
         json.dump(all_po_data, f, indent=4)
 
-    # Annotate PDF (only first PO for now)
+    # Annotate only first PO
     annotate_pdf(pdf_bytes, all_po_data[0]["PO_Fields"], pd.DataFrame(all_po_data[0]["Line_Items"]))
 
-    # Bundle
+    # Create zip bundle
     with ZipFile("PO_Extraction_Outputs.zip", "w") as zipf:
         zipf.write("All_PO_Main_Fields.xlsx")
         zipf.write("All_PO_Line_Items.xlsx")
         zipf.write("All_PO_Structured_Data.json")
         zipf.write("Annotated_PO.pdf")
 
+    # Download button
     with open("PO_Extraction_Outputs.zip", "rb") as f:
         st.download_button("📥 Download All Extracted Outputs", f, file_name="PO_Extraction_Outputs.zip")
