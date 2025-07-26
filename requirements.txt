@@ -1,4 +1,6 @@
 streamlit
+pytesseract
+pdf2image
 PyMuPDF
 PyPDF2
 pandas
