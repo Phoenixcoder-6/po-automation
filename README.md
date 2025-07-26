@@ -87,3 +87,12 @@ The goal is to build a **lightweight, interactive PO extraction system** that:
 
 To ensure accurate parsing, your POs should follow this **ideal structure**:
 
+Purchase Order
+
+            PO Number: 
+            Vendor: 
+            Address: 
+            Date: 
+            Total Amount: 
+            Item - Quantity:  - Unit Price: 
+
