@@ -29,18 +29,25 @@ def extract_main_fields(text):
     return fields
 
 def extract_line_items_loose(text):
-    lines = text.split("\n")
+    lines = text.split('\n')
     items = []
-    pattern = re.compile(
+
+    pattern1 = re.compile(
         r'(?P<desc>.+?)\s*[-–]?\s*(Qty|Quantity)[:\s]*(?P<qty>\d+)\s*[-–]?\s*(Unit Price|Price)[:\s₹Rs\.:]*(?P<price>[\d,]+\.\d{2})',
         re.I
     )
+
+    pattern2 = re.compile(
+        r'(?P<desc>[A-Za-z0-9\s\-.]+)\s+(?P<qty>\d{1,3})\s+([\₹Rs\.:]*)?(?P<price>[\d,]+\.\d{2})',
+        re.I
+    )
+
     for line in lines:
-        m = pattern.search(line)
-        if m:
-            desc = re.sub(r'^\d+\.\s*', '', m.group("desc").strip())
-            qty = m.group("qty")
-            unit = m.group("price").replace(",", "")
+        match1 = pattern1.search(line)
+        if match1:
+            desc = re.sub(r'^\d+\.\s*', '', match1.group("desc").strip())
+            qty = match1.group("qty")
+            unit = match1.group("price").replace(",", "")
             total = f"{float(qty)*float(unit):.2f}"
             items.append({
                 "Description": desc,
@@ -48,8 +55,22 @@ def extract_line_items_loose(text):
                 "Unit_Price": unit,
                 "Total_Price": total
             })
-    return pd.DataFrame(items)
+            continue
 
+        match2 = pattern2.search(line)
+        if match2:
+            desc = match2.group("desc").strip()
+            qty = match2.group("qty")
+            unit = match2.group("price").replace(",", "")
+            total = f"{float(qty)*float(unit):.2f}"
+            items.append({
+                "Description": desc,
+                "Quantity": qty,
+                "Unit_Price": unit,
+                "Total_Price": total
+            })
+
+    return pd.DataFrame(items)
 
 def annotate_pdf(file_bytes, fields, items):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
