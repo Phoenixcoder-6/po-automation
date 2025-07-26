@@ -143,7 +143,9 @@ You can include multiple POs in a single PDF. Each PO should begin with `"Purcha
 # 🧠 Maintainer
 
 -👩‍💻 Ankita Ghosh
+
 -Postgraduate in CSE (Data Science) | IEEE Researcher | AI/ML Developer
+
 -Feel free to connect for collaboration or contributions!
 
 ---
@@ -151,6 +153,7 @@ You can include multiple POs in a single PDF. Each PO should begin with `"Purcha
 # 🤝 Contributing
 
 -Pull requests are welcome. For major changes, open an issue first.
+
 -Please ensure tests are updated as appropriate.
 
 
