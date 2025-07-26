@@ -1,16 +1,22 @@
-import streamlit as st # type: ignore
+import streamlit as st
 import pandas as pd
-import fitz  # type: ignore # PyMuPDF
+import fitz  # PyMuPDF
 import io
 import json
 import re
-from PyPDF2 import PdfReader # type: ignore
+from PyPDF2 import PdfReader
 from zipfile import ZipFile
 
 st.set_page_config(page_title="PO Automation", layout="wide")
-st.title("📄 Purchase Order Automation Tool")
+st.title("📄 Multi-PO Automation Tool")
 
-uploaded_file = st.file_uploader("Upload a Purchase Order PDF", type="pdf")
+uploaded_file = st.file_uploader("Upload a Purchase Order PDF (even with multiple POs)", type="pdf")
+
+# ---------- Helper Functions ----------
+
+def split_po_blocks(text):
+    blocks = re.split(r'(?=Purchase Order)', text, flags=re.IGNORECASE)
+    return [b.strip() for b in blocks if b.strip()]
 
 def extract_main_fields(text):
     fields = {}
@@ -33,7 +39,12 @@ def extract_line_items_loose(text):
             qty = m.group(2)
             unit = m.group(3).replace(',', '')
             total = f"{float(qty)*float(unit):.2f}"
-            items.append({"Description": desc, "Quantity": qty, "Unit_Price": unit, "Total_Price": total})
+            items.append({
+                "Description": desc,
+                "Quantity": qty,
+                "Unit_Price": unit,
+                "Total_Price": total
+            })
     return pd.DataFrame(items)
 
 def annotate_pdf(file_bytes, fields, items):
@@ -46,46 +57,57 @@ def annotate_pdf(file_bytes, fields, items):
         for _, row in items.iterrows():
             for rect in page.search_for(str(row['Description'])):
                 page.add_rect_annot(rect)
-    output_pdf = "Annotated_PO.pdf"
-    doc.save(output_pdf)
+        break  # Annotate only first PO
+    doc.save("Annotated_PO.pdf")
     doc.close()
-    return output_pdf
+
+# ---------- Main App Logic ----------
 
 if uploaded_file:
-    st.info("✅ File uploaded. Processing...")
+    st.info("✅ File uploaded. Processing multiple POs...")
     pdf_bytes = uploaded_file.read()
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    pdf_stream = io.BytesIO(pdf_bytes)
+    reader = PdfReader(pdf_stream)
+    full_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-    fields = extract_main_fields(text)
-    items_df = extract_line_items_loose(text)
+    po_blocks = split_po_blocks(full_text)
+    all_po_data = []
+    all_items = []
 
-    st.subheader("📋 Extracted Main PO Fields")
-    st.json(fields)
+    for block in po_blocks:
+        fields = extract_main_fields(block)
+        items_df = extract_line_items_loose(block)
+        all_po_data.append({
+            "PO_Fields": fields,
+            "Line_Items": items_df.to_dict(orient="records")
+        })
+        for item in items_df.to_dict(orient="records"):
+            item["PO_Number"] = fields["PO_Number"]
+            all_items.append(item)
 
-    st.subheader("📦 Extracted Line Items")
-    st.dataframe(items_df)
+    # Display results
+    st.subheader("📋 All Extracted PO Fields")
+    st.dataframe(pd.DataFrame([po["PO_Fields"] for po in all_po_data]))
+
+    st.subheader("📦 All Extracted Line Items")
+    st.dataframe(pd.DataFrame(all_items))
 
     # Save files
-    main_df = pd.DataFrame([fields])
-    main_df.to_excel("PO_Main_Fields.xlsx", index=False)
-    items_df.to_excel("PO_Line_Items.xlsx", index=False)
+    pd.DataFrame([po["PO_Fields"] for po in all_po_data]).to_excel("All_PO_Main_Fields.xlsx", index=False)
+    pd.DataFrame(all_items).to_excel("All_PO_Line_Items.xlsx", index=False)
 
-    with open("PO_Structured_Data.json", "w") as f:
-        json.dump({
-            "Main_Fields": fields,
-            "Line_Items": items_df.to_dict(orient="records")
-        }, f, indent=4)
+    with open("All_PO_Structured_Data.json", "w") as f:
+        json.dump(all_po_data, f, indent=4)
 
-    # Annotate and save
-    pdf_output = annotate_pdf(pdf_bytes, fields, items_df)
+    # Annotate PDF (only first PO for now)
+    annotate_pdf(pdf_bytes, all_po_data[0]["PO_Fields"], pd.DataFrame(all_po_data[0]["Line_Items"]))
 
     # Bundle
     with ZipFile("PO_Extraction_Outputs.zip", "w") as zipf:
-        zipf.write("PO_Main_Fields.xlsx")
-        zipf.write("PO_Line_Items.xlsx")
-        zipf.write("PO_Structured_Data.json")
-        zipf.write(pdf_output)
+        zipf.write("All_PO_Main_Fields.xlsx")
+        zipf.write("All_PO_Line_Items.xlsx")
+        zipf.write("All_PO_Structured_Data.json")
+        zipf.write("Annotated_PO.pdf")
 
     with open("PO_Extraction_Outputs.zip", "rb") as f:
-        st.download_button("📥 Download All Extracted Files", f, file_name="PO_Extraction_Outputs.zip")
+        st.download_button("📥 Download All Extracted Outputs", f, file_name="PO_Extraction_Outputs.zip")
